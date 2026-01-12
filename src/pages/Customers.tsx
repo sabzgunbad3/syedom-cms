@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -18,112 +20,95 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useNavigate } from "react-router-dom";
-import { Plus, Search, Phone, MapPin, Calendar, IndianRupee } from "lucide-react";
-import { toast } from "sonner";
-
-interface Customer {
-  id: string;
-  name: string;
-  phone: string;
-  address: string;
-  type: "monthly" | "daily";
-  dailyQuantity: number;
-  pricePerLiter: number;
-  balance: number;
-  joinedDate: string;
-}
+import { Plus, Search, Phone, MapPin, Calendar, IndianRupee, Loader2 } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { useCustomers, Customer } from "@/hooks/useCustomers";
 
 export default function Customers() {
   const navigate = useNavigate();
+  const { user, loading: authLoading, signOut } = useAuth();
+  const { customers, loading, addCustomer } = useCustomers();
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [filterType, setFilterType] = useState<"all" | "monthly" | "daily">("all");
-
-  // Mock data - will be replaced with real data
-  const [customers] = useState<Customer[]>([
-    {
-      id: "1",
-      name: "Sharma Family",
-      phone: "+91 98765 43210",
-      address: "123 Main Street, Village A",
-      type: "monthly",
-      dailyQuantity: 2,
-      pricePerLiter: 60,
-      balance: -1200,
-      joinedDate: "2024-01-15",
-    },
-    {
-      id: "2",
-      name: "Gupta Store",
-      phone: "+91 98765 12345",
-      address: "Market Road, Village B",
-      type: "monthly",
-      dailyQuantity: 10,
-      pricePerLiter: 55,
-      balance: 0,
-      joinedDate: "2023-06-20",
-    },
-    {
-      id: "3",
-      name: "Singh Household",
-      phone: "+91 87654 32109",
-      address: "Temple Lane, Village A",
-      type: "daily",
-      dailyQuantity: 1.5,
-      pricePerLiter: 62,
-      balance: 0,
-      joinedDate: "2024-03-10",
-    },
-    {
-      id: "4",
-      name: "Patel Dairy Shop",
-      phone: "+91 76543 21098",
-      address: "Highway Road, Town Center",
-      type: "monthly",
-      dailyQuantity: 15,
-      pricePerLiter: 52,
-      balance: -5400,
-      joinedDate: "2022-12-01",
-    },
-  ]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [newCustomer, setNewCustomer] = useState({
     name: "",
     phone: "",
     address: "",
-    type: "monthly" as "monthly" | "daily",
-    dailyQuantity: "",
-    pricePerLiter: "",
+    payment_type: "monthly" as "monthly" | "daily",
+    daily_quantity: "",
+    rate_per_liter: "60",
   });
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate("/auth");
+    }
+  }, [user, authLoading, navigate]);
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate("/");
+  };
 
   const filteredCustomers = customers.filter((customer) => {
     const matchesSearch =
       customer.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      customer.phone.includes(searchQuery);
-    const matchesType = filterType === "all" || customer.type === filterType;
+      (customer.phone?.includes(searchQuery) ?? false);
+    const matchesType = filterType === "all" || customer.payment_type === filterType;
     return matchesSearch && matchesType;
   });
 
-  const handleAddCustomer = () => {
-    if (!newCustomer.name || !newCustomer.phone || !newCustomer.dailyQuantity) {
-      toast.error("Please fill in all required fields");
+  const handleAddCustomer = async () => {
+    if (!newCustomer.name || !newCustomer.daily_quantity) {
       return;
     }
-    toast.success(`Customer "${newCustomer.name}" added successfully`);
-    setIsDialogOpen(false);
-    setNewCustomer({
-      name: "",
-      phone: "",
-      address: "",
-      type: "monthly",
-      dailyQuantity: "",
-      pricePerLiter: "",
-    });
+
+    setIsSubmitting(true);
+    try {
+      await addCustomer({
+        name: newCustomer.name,
+        phone: newCustomer.phone || null,
+        address: newCustomer.address || null,
+        payment_type: newCustomer.payment_type,
+        daily_quantity: parseFloat(newCustomer.daily_quantity),
+        rate_per_liter: parseFloat(newCustomer.rate_per_liter) || 60,
+        is_active: true,
+      });
+      
+      setIsDialogOpen(false);
+      setNewCustomer({
+        name: "",
+        phone: "",
+        address: "",
+        payment_type: "monthly",
+        daily_quantity: "",
+        rate_per_liter: "60",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
+  if (authLoading) {
+    return (
+      <DashboardLayout onLogout={handleLogout}>
+        <div className="space-y-6">
+          <Skeleton className="h-10 w-48" />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-48" />
+            ))}
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
-    <DashboardLayout onLogout={() => navigate("/")}>
+    <DashboardLayout onLogout={handleLogout}>
       <div className="space-y-6 animate-fade-in">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -157,7 +142,7 @@ export default function Customers() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="phone">Phone Number *</Label>
+                  <Label htmlFor="phone">Phone Number</Label>
                   <Input
                     id="phone"
                     placeholder="+91 XXXXX XXXXX"
@@ -182,9 +167,9 @@ export default function Customers() {
                   <div className="space-y-2">
                     <Label htmlFor="type">Customer Type *</Label>
                     <Select
-                      value={newCustomer.type}
+                      value={newCustomer.payment_type}
                       onValueChange={(value: "monthly" | "daily") =>
-                        setNewCustomer({ ...newCustomer, type: value })
+                        setNewCustomer({ ...newCustomer, payment_type: value })
                       }
                     >
                       <SelectTrigger>
@@ -203,9 +188,9 @@ export default function Customers() {
                       type="number"
                       step="0.5"
                       placeholder="e.g., 2"
-                      value={newCustomer.dailyQuantity}
+                      value={newCustomer.daily_quantity}
                       onChange={(e) =>
-                        setNewCustomer({ ...newCustomer, dailyQuantity: e.target.value })
+                        setNewCustomer({ ...newCustomer, daily_quantity: e.target.value })
                       }
                     />
                   </div>
@@ -216,14 +201,26 @@ export default function Customers() {
                     id="price"
                     type="number"
                     placeholder="e.g., 60"
-                    value={newCustomer.pricePerLiter}
+                    value={newCustomer.rate_per_liter}
                     onChange={(e) =>
-                      setNewCustomer({ ...newCustomer, pricePerLiter: e.target.value })
+                      setNewCustomer({ ...newCustomer, rate_per_liter: e.target.value })
                     }
                   />
                 </div>
-                <Button className="w-full" variant="hero" onClick={handleAddCustomer}>
-                  Add Customer
+                <Button 
+                  className="w-full" 
+                  variant="hero" 
+                  onClick={handleAddCustomer}
+                  disabled={isSubmitting || !newCustomer.name || !newCustomer.daily_quantity}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Adding...
+                    </>
+                  ) : (
+                    "Add Customer"
+                  )}
                 </Button>
               </div>
             </DialogContent>
@@ -257,68 +254,76 @@ export default function Customers() {
         </div>
 
         {/* Customer List */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredCustomers.map((customer) => (
-            <Card
-              key={customer.id}
-              variant="elevated"
-              className="cursor-pointer hover:shadow-lg transition-all"
-            >
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <CardTitle className="text-lg">{customer.name}</CardTitle>
-                    <span
-                      className={`text-xs px-2 py-1 rounded-full ${
-                        customer.type === "monthly"
-                          ? "bg-primary/10 text-primary"
-                          : "bg-accent/10 text-accent"
-                      }`}
-                    >
-                      {customer.type === "monthly" ? "Monthly" : "Daily"}
-                    </span>
+        {loading ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <Skeleton key={i} className="h-48" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredCustomers.map((customer) => (
+              <Card
+                key={customer.id}
+                variant="elevated"
+                className="cursor-pointer hover:shadow-lg transition-all"
+              >
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <CardTitle className="text-lg">{customer.name}</CardTitle>
+                      <span
+                        className={`text-xs px-2 py-1 rounded-full ${
+                          customer.payment_type === "monthly"
+                            ? "bg-primary/10 text-primary"
+                            : "bg-accent/10 text-accent"
+                        }`}
+                      >
+                        {customer.payment_type === "monthly" ? "Monthly" : "Daily"}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm text-muted-foreground">Rate</p>
+                      <p className="font-semibold">₹{customer.rate_per_liter}/L</p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm text-muted-foreground">Balance</p>
-                    <p
-                      className={`font-semibold ${
-                        customer.balance < 0 ? "text-destructive" : "text-success"
-                      }`}
-                    >
-                      {customer.balance < 0 ? "-" : ""}₹{Math.abs(customer.balance)}
-                    </p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {customer.phone && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Phone className="h-4 w-4" />
+                      <span>{customer.phone}</span>
+                    </div>
+                  )}
+                  {customer.address && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <MapPin className="h-4 w-4" />
+                      <span className="truncate">{customer.address}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Calendar className="h-4 w-4" />
+                    <span>Since {new Date(customer.created_at).toLocaleDateString()}</span>
                   </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Phone className="h-4 w-4" />
-                  <span>{customer.phone}</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <MapPin className="h-4 w-4" />
-                  <span className="truncate">{customer.address}</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Calendar className="h-4 w-4" />
-                  <span>Since {new Date(customer.joinedDate).toLocaleDateString()}</span>
-                </div>
-                <div className="pt-3 border-t border-border flex justify-between items-center">
-                  <div className="flex items-center gap-1">
-                    <span className="text-lg font-bold">{customer.dailyQuantity}L</span>
-                    <span className="text-sm text-muted-foreground">/day</span>
+                  <div className="pt-3 border-t border-border flex justify-between items-center">
+                    <div className="flex items-center gap-1">
+                      <span className="text-lg font-bold">{customer.daily_quantity}L</span>
+                      <span className="text-sm text-muted-foreground">/day</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-muted-foreground">
+                      <IndianRupee className="h-4 w-4" />
+                      <span className="font-medium">
+                        {Math.round(customer.daily_quantity * customer.rate_per_liter * 30)}/month
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 text-muted-foreground">
-                    <IndianRupee className="h-4 w-4" />
-                    <span className="font-medium">{customer.pricePerLiter}/L</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
 
-        {filteredCustomers.length === 0 && (
+        {!loading && filteredCustomers.length === 0 && (
           <Card className="p-12 text-center">
             <p className="text-muted-foreground">No customers found</p>
             <Button variant="outline" className="mt-4" onClick={() => setIsDialogOpen(true)}>

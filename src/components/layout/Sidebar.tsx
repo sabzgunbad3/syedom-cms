@@ -15,12 +15,15 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+import { FileText } from "lucide-react";
+
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Customers", href: "/customers", icon: Users },
   { name: "Milk Production", href: "/production", icon: Milk },
   { name: "Deliveries", href: "/deliveries", icon: Truck },
   { name: "Payments", href: "/payments", icon: CreditCard },
+  { name: "Reports", href: "/reports", icon: FileText },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 

@@ -1,8 +1,16 @@
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useNavigate } from "react-router-dom";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useAuth } from "@/hooks/useAuth";
+import { useCustomers } from "@/hooks/useCustomers";
+import { useProduction } from "@/hooks/useProduction";
+import { useDeliveries } from "@/hooks/useDeliveries";
+import { usePayments } from "@/hooks/usePayments";
+import { useOfflineStorage } from "@/hooks/useOfflineStorage";
 import {
   Milk,
   Users,
@@ -11,34 +19,97 @@ import {
   Plus,
   ArrowRight,
   AlertCircle,
+  WifiOff,
 } from "lucide-react";
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { user, loading: authLoading, signOut } = useAuth();
+  const { customers, loading: customersLoading } = useCustomers();
+  const { entries, getTodayProduction, getWeeklyStats, loading: productionLoading } = useProduction();
+  const { deliveries, getTodayStats, loading: deliveriesLoading } = useDeliveries();
+  const { payments, getTotalReceived, loading: paymentsLoading } = usePayments();
+  const { isOnline, saveToCache } = useOfflineStorage();
 
-  // Mock data - will be replaced with real data from database
-  const stats = {
-    todayProduction: 450,
-    totalCustomers: 48,
-    todayDeliveries: 42,
-    pendingPayments: 15600,
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate("/auth");
+    }
+  }, [user, authLoading, navigate]);
+
+  // Cache data for offline use
+  useEffect(() => {
+    if (customers.length || entries.length || deliveries.length || payments.length) {
+      saveToCache({
+        customers,
+        production: entries,
+        deliveries,
+        payments,
+      });
+    }
+  }, [customers, entries, deliveries, payments, saveToCache]);
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate("/");
   };
 
-  const recentDeliveries = [
-    { customer: "Sharma Family", quantity: 2, time: "6:30 AM", status: "delivered" },
-    { customer: "Gupta Store", quantity: 10, time: "7:00 AM", status: "delivered" },
-    { customer: "Singh Household", quantity: 1.5, time: "7:30 AM", status: "pending" },
-    { customer: "Patel Dairy Shop", quantity: 15, time: "8:00 AM", status: "delivered" },
-  ];
+  if (authLoading) {
+    return (
+      <DashboardLayout onLogout={handleLogout}>
+        <div className="space-y-8 animate-fade-in">
+          <Skeleton className="h-10 w-48" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-32" />
+            ))}
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
-  const alerts = [
-    { message: "Low milk production today - 50L shortage", type: "warning" },
-    { message: "3 customers have pending payments > 30 days", type: "info" },
-  ];
+  const todayProduction = getTodayProduction();
+  const weeklyStats = getWeeklyStats();
+  const todayDeliveryStats = getTodayStats();
+  const activeCustomers = customers.filter(c => c.is_active).length;
+  
+  // Calculate pending payments based on customer dues
+  const totalExpectedMonthly = customers
+    .filter(c => c.is_active && c.payment_type === 'monthly')
+    .reduce((sum, c) => sum + (c.daily_quantity * c.rate_per_liter * 30), 0);
+  const totalReceived = getTotalReceived();
+
+  const alerts: { message: string; type: string }[] = [];
+  
+  if (todayProduction && todayProduction.total_quantity < weeklyStats.average * 0.8) {
+    alerts.push({
+      message: `Low production today - ${Math.round(weeklyStats.average - todayProduction.total_quantity)}L below average`,
+      type: "warning",
+    });
+  }
+
+  const recentDeliveries = deliveries
+    .filter(d => d.date === new Date().toISOString().split("T")[0])
+    .slice(0, 4)
+    .map(d => ({
+      customer: d.customer?.name || "Unknown",
+      quantity: d.quantity,
+      time: new Date(d.created_at).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true }),
+      status: d.is_delivered ? "delivered" : "pending",
+    }));
 
   return (
-    <DashboardLayout onLogout={() => navigate("/")}>
+    <DashboardLayout onLogout={handleLogout}>
       <div className="space-y-8 animate-fade-in">
+        {/* Offline Banner */}
+        {!isOnline && (
+          <div className="flex items-center gap-3 p-4 rounded-lg bg-warning/10 border border-warning/20">
+            <WifiOff className="h-5 w-5 text-warning shrink-0" />
+            <p className="text-sm font-medium">You're offline. Changes will sync when you reconnect.</p>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -63,30 +134,33 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
           <StatCard
             title="Today's Production"
-            value={`${stats.todayProduction}L`}
+            value={productionLoading ? "..." : `${todayProduction?.total_quantity || 0}L`}
             subtitle="Milk collected"
             icon={<Milk className="h-6 w-6" />}
-            trend={{ value: 12, label: "vs yesterday" }}
+            trend={weeklyStats.average > 0 ? { 
+              value: todayProduction 
+                ? Math.round(((todayProduction.total_quantity - weeklyStats.average) / weeklyStats.average) * 100)
+                : 0, 
+              label: "vs avg" 
+            } : undefined}
           />
           <StatCard
             title="Total Customers"
-            value={stats.totalCustomers}
+            value={customersLoading ? "..." : activeCustomers}
             subtitle="Active subscribers"
             icon={<Users className="h-6 w-6" />}
-            trend={{ value: 4, label: "this month" }}
           />
           <StatCard
             title="Today's Deliveries"
-            value={`${stats.todayDeliveries}/${stats.totalCustomers}`}
+            value={deliveriesLoading ? "..." : `${todayDeliveryStats.delivered}/${activeCustomers}`}
             subtitle="Completed"
             icon={<Truck className="h-6 w-6" />}
           />
           <StatCard
-            title="Pending Payments"
-            value={`₹${stats.pendingPayments.toLocaleString()}`}
-            subtitle="To be collected"
+            title="This Month"
+            value={paymentsLoading ? "..." : `₹${totalReceived.toLocaleString()}`}
+            subtitle="Collected"
             icon={<IndianRupee className="h-6 w-6" />}
-            trend={{ value: -8, label: "vs last week" }}
           />
         </div>
 
@@ -117,36 +191,46 @@ export default function Dashboard() {
               </Button>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {recentDeliveries.map((delivery, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center justify-between py-3 border-b border-border last:border-0"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                        <Users className="h-5 w-5 text-primary" />
+              {deliveriesLoading ? (
+                <div className="space-y-4">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} className="h-16" />
+                  ))}
+                </div>
+              ) : recentDeliveries.length > 0 ? (
+                <div className="space-y-4">
+                  {recentDeliveries.map((delivery, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between py-3 border-b border-border last:border-0"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                          <Users className="h-5 w-5 text-primary" />
+                        </div>
+                        <div>
+                          <p className="font-medium">{delivery.customer}</p>
+                          <p className="text-sm text-muted-foreground">{delivery.time}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium">{delivery.customer}</p>
-                        <p className="text-sm text-muted-foreground">{delivery.time}</p>
+                      <div className="text-right">
+                        <p className="font-semibold">{delivery.quantity}L</p>
+                        <span
+                          className={`text-xs px-2 py-1 rounded-full ${
+                            delivery.status === "delivered"
+                              ? "bg-success/10 text-success"
+                              : "bg-warning/10 text-warning"
+                          }`}
+                        >
+                          {delivery.status}
+                        </span>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="font-semibold">{delivery.quantity}L</p>
-                      <span
-                        className={`text-xs px-2 py-1 rounded-full ${
-                          delivery.status === "delivered"
-                            ? "bg-success/10 text-success"
-                            : "bg-warning/10 text-warning"
-                        }`}
-                      >
-                        {delivery.status}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-center py-8">No deliveries today yet</p>
+              )}
             </CardContent>
           </Card>
 

@@ -1,144 +1,139 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { useNavigate } from "react-router-dom";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Truck,
   Check,
   X,
   AlertTriangle,
   Search,
-  Calendar,
   Milk,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
-
-interface DeliveryItem {
-  id: string;
-  customerId: string;
-  customerName: string;
-  scheduledQuantity: number;
-  deliveredQuantity: number | null;
-  status: "pending" | "delivered" | "skipped" | "shortage";
-  time: string | null;
-  notes: string;
-}
+import { useAuth } from "@/hooks/useAuth";
+import { useCustomers } from "@/hooks/useCustomers";
+import { useDeliveries } from "@/hooks/useDeliveries";
+import { useProduction } from "@/hooks/useProduction";
 
 export default function Deliveries() {
   const navigate = useNavigate();
+  const { user, loading: authLoading, signOut } = useAuth();
+  const { customers, loading: customersLoading } = useCustomers();
+  const { deliveries, loading: deliveriesLoading, addDelivery, fetchDeliveries } = useDeliveries();
+  const { getTodayProduction } = useProduction();
+  
   const [selectedDate, setSelectedDate] = useState(
     new Date().toISOString().split("T")[0]
   );
   const [searchQuery, setSearchQuery] = useState("");
-  const [availableMilk, setAvailableMilk] = useState(450);
+  const [processingId, setProcessingId] = useState<string | null>(null);
 
-  const [deliveries, setDeliveries] = useState<DeliveryItem[]>([
-    {
-      id: "1",
-      customerId: "1",
-      customerName: "Sharma Family",
-      scheduledQuantity: 2,
-      deliveredQuantity: 2,
-      status: "delivered",
-      time: "6:30 AM",
-      notes: "",
-    },
-    {
-      id: "2",
-      customerId: "2",
-      customerName: "Gupta Store",
-      scheduledQuantity: 10,
-      deliveredQuantity: 10,
-      status: "delivered",
-      time: "7:00 AM",
-      notes: "",
-    },
-    {
-      id: "3",
-      customerId: "3",
-      customerName: "Singh Household",
-      scheduledQuantity: 1.5,
-      deliveredQuantity: null,
-      status: "pending",
-      time: null,
-      notes: "",
-    },
-    {
-      id: "4",
-      customerId: "4",
-      customerName: "Patel Dairy Shop",
-      scheduledQuantity: 15,
-      deliveredQuantity: null,
-      status: "pending",
-      time: null,
-      notes: "",
-    },
-    {
-      id: "5",
-      customerId: "5",
-      customerName: "Kumar Residence",
-      scheduledQuantity: 1,
-      deliveredQuantity: null,
-      status: "pending",
-      time: null,
-      notes: "",
-    },
-  ]);
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate("/auth");
+    }
+  }, [user, authLoading, navigate]);
 
-  const totalScheduled = deliveries.reduce((sum, d) => sum + d.scheduledQuantity, 0);
-  const totalDelivered = deliveries.reduce(
-    (sum, d) => sum + (d.deliveredQuantity || 0),
-    0
-  );
-  const pendingCount = deliveries.filter((d) => d.status === "pending").length;
-  const shortage = Math.max(0, totalScheduled - availableMilk);
+  useEffect(() => {
+    if (selectedDate) {
+      fetchDeliveries(selectedDate);
+    }
+  }, [selectedDate, fetchDeliveries]);
 
-  const handleMarkDelivered = (id: string, quantity?: number) => {
-    setDeliveries((prev) =>
-      prev.map((d) =>
-        d.id === id
-          ? {
-              ...d,
-              status: "delivered" as const,
-              deliveredQuantity: quantity ?? d.scheduledQuantity,
-              time: new Date().toLocaleTimeString("en-IN", {
-                hour: "numeric",
-                minute: "2-digit",
-                hour12: true,
-              }),
-            }
-          : d
-      )
-    );
-    toast.success("Delivery marked as complete");
+  const handleLogout = async () => {
+    await signOut();
+    navigate("/");
   };
 
-  const handleSkipDelivery = (id: string, reason: string = "Not available") => {
-    setDeliveries((prev) =>
-      prev.map((d) =>
-        d.id === id
-          ? {
-              ...d,
-              status: "skipped" as const,
-              deliveredQuantity: 0,
-              notes: reason,
-            }
-          : d
-      )
-    );
-    toast.info("Delivery skipped");
-  };
+  const todayProduction = getTodayProduction();
+  const availableMilk = todayProduction?.total_quantity || 0;
 
-  const filteredDeliveries = deliveries.filter((d) =>
+  // Create delivery items from customers + existing deliveries
+  const activeCustomers = customers.filter(c => c.is_active);
+  const deliveryItems = activeCustomers.map(customer => {
+    const existingDelivery = deliveries.find(
+      d => d.customer_id === customer.id && d.date === selectedDate
+    );
+    
+    return {
+      customerId: customer.id,
+      customerName: customer.name,
+      scheduledQuantity: customer.daily_quantity,
+      deliveredQuantity: existingDelivery?.quantity ?? null,
+      isDelivered: existingDelivery?.is_delivered ?? false,
+      status: existingDelivery 
+        ? (existingDelivery.is_delivered ? "delivered" : "skipped")
+        : "pending",
+    };
+  });
+
+  const filteredDeliveries = deliveryItems.filter((d) =>
     d.customerName.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const totalScheduled = deliveryItems.reduce((sum, d) => sum + d.scheduledQuantity, 0);
+  const totalDelivered = deliveryItems.reduce(
+    (sum, d) => sum + (d.deliveredQuantity || 0),
+    0
+  );
+  const pendingCount = deliveryItems.filter((d) => d.status === "pending").length;
+  const shortage = Math.max(0, totalScheduled - availableMilk);
+
+  const handleMarkDelivered = async (customerId: string, quantity: number) => {
+    setProcessingId(customerId);
+    try {
+      await addDelivery({
+        customer_id: customerId,
+        date: selectedDate,
+        quantity,
+        is_delivered: true,
+      });
+      toast.success("Delivery marked as complete");
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleSkipDelivery = async (customerId: string, reason: string = "Not available") => {
+    setProcessingId(customerId);
+    try {
+      await addDelivery({
+        customer_id: customerId,
+        date: selectedDate,
+        quantity: 0,
+        is_delivered: false,
+        shortage_reason: reason,
+      });
+      toast.info("Delivery skipped");
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const loading = authLoading || customersLoading || deliveriesLoading;
+
+  if (authLoading) {
+    return (
+      <DashboardLayout onLogout={handleLogout}>
+        <div className="space-y-6">
+          <Skeleton className="h-10 w-48" />
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-24" />
+            ))}
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
-    <DashboardLayout onLogout={() => navigate("/")}>
+    <DashboardLayout onLogout={handleLogout}>
       <div className="space-y-6 animate-fade-in">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -237,99 +232,119 @@ export default function Deliveries() {
             <CardTitle>Today's Deliveries</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {filteredDeliveries.map((delivery) => (
-                <div
-                  key={delivery.id}
-                  className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-lg border transition-all ${
-                    delivery.status === "delivered"
-                      ? "bg-success/5 border-success/20"
-                      : delivery.status === "skipped"
-                      ? "bg-muted border-muted-foreground/20 opacity-60"
-                      : "bg-card border-border hover:border-primary/30"
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <div
-                      className={`h-10 w-10 rounded-full flex items-center justify-center ${
-                        delivery.status === "delivered"
-                          ? "bg-success/20"
-                          : delivery.status === "skipped"
-                          ? "bg-muted-foreground/20"
-                          : "bg-primary/10"
-                      }`}
-                    >
-                      {delivery.status === "delivered" ? (
-                        <Check className="h-5 w-5 text-success" />
-                      ) : delivery.status === "skipped" ? (
-                        <X className="h-5 w-5 text-muted-foreground" />
-                      ) : (
-                        <Truck className="h-5 w-5 text-primary" />
-                      )}
-                    </div>
-                    <div>
-                      <p className="font-medium">{delivery.customerName}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {delivery.scheduledQuantity}L scheduled
-                        {delivery.time && ` • ${delivery.time}`}
-                      </p>
-                    </div>
-                  </div>
-
-                  {delivery.status === "pending" ? (
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      <Input
-                        type="number"
-                        placeholder="Qty"
-                        className="w-20"
-                        defaultValue={delivery.scheduledQuantity}
-                        step="0.5"
-                        min="0"
-                        id={`qty-${delivery.id}`}
-                      />
-                      <Button
-                        size="sm"
-                        variant="success"
-                        onClick={() => {
-                          const input = document.getElementById(
-                            `qty-${delivery.id}`
-                          ) as HTMLInputElement;
-                          handleMarkDelivered(
-                            delivery.id,
-                            parseFloat(input.value) || delivery.scheduledQuantity
-                          );
-                        }}
-                      >
-                        <Check className="h-4 w-4 mr-1" />
-                        Done
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleSkipDelivery(delivery.id)}
-                      >
-                        <X className="h-4 w-4 mr-1" />
-                        Skip
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="text-right">
-                      <span
-                        className={`text-sm px-3 py-1 rounded-full ${
+            {loading ? (
+              <div className="space-y-4">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <Skeleton key={i} className="h-20" />
+                ))}
+              </div>
+            ) : filteredDeliveries.length > 0 ? (
+              <div className="space-y-4">
+                {filteredDeliveries.map((delivery) => (
+                  <div
+                    key={delivery.customerId}
+                    className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-lg border transition-all ${
+                      delivery.status === "delivered"
+                        ? "bg-success/5 border-success/20"
+                        : delivery.status === "skipped"
+                        ? "bg-muted border-muted-foreground/20 opacity-60"
+                        : "bg-card border-border hover:border-primary/30"
+                    }`}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div
+                        className={`h-10 w-10 rounded-full flex items-center justify-center ${
                           delivery.status === "delivered"
-                            ? "bg-success/10 text-success"
-                            : "bg-muted text-muted-foreground"
+                            ? "bg-success/20"
+                            : delivery.status === "skipped"
+                            ? "bg-muted-foreground/20"
+                            : "bg-primary/10"
                         }`}
                       >
-                        {delivery.status === "delivered"
-                          ? `Delivered ${delivery.deliveredQuantity}L`
-                          : "Skipped"}
-                      </span>
+                        {delivery.status === "delivered" ? (
+                          <Check className="h-5 w-5 text-success" />
+                        ) : delivery.status === "skipped" ? (
+                          <X className="h-5 w-5 text-muted-foreground" />
+                        ) : (
+                          <Truck className="h-5 w-5 text-primary" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="font-medium">{delivery.customerName}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {delivery.scheduledQuantity}L scheduled
+                        </p>
+                      </div>
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
+
+                    {delivery.status === "pending" ? (
+                      <div className="flex items-center gap-2 sm:gap-3">
+                        <Input
+                          type="number"
+                          placeholder="Qty"
+                          className="w-20"
+                          defaultValue={delivery.scheduledQuantity}
+                          step="0.5"
+                          min="0"
+                          id={`qty-${delivery.customerId}`}
+                          disabled={processingId === delivery.customerId}
+                        />
+                        <Button
+                          size="sm"
+                          variant="success"
+                          disabled={processingId === delivery.customerId}
+                          onClick={() => {
+                            const input = document.getElementById(
+                              `qty-${delivery.customerId}`
+                            ) as HTMLInputElement;
+                            handleMarkDelivered(
+                              delivery.customerId,
+                              parseFloat(input.value) || delivery.scheduledQuantity
+                            );
+                          }}
+                        >
+                          {processingId === delivery.customerId ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <>
+                              <Check className="h-4 w-4 mr-1" />
+                              Done
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={processingId === delivery.customerId}
+                          onClick={() => handleSkipDelivery(delivery.customerId)}
+                        >
+                          <X className="h-4 w-4 mr-1" />
+                          Skip
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="text-right">
+                        <span
+                          className={`text-sm px-3 py-1 rounded-full ${
+                            delivery.status === "delivered"
+                              ? "bg-success/10 text-success"
+                              : "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {delivery.status === "delivered"
+                            ? `Delivered ${delivery.deliveredQuantity}L`
+                            : "Skipped"}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-center text-muted-foreground py-8">
+                No customers found. Add customers first to manage deliveries.
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>

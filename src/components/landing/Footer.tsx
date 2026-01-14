@@ -1,4 +1,4 @@
-import { Milk, Mail, Phone, MapPin } from "lucide-react";
+import { Mail } from "lucide-react";
 
 export function Footer() {
   const currentYear = new Date().getFullYear();
@@ -27,18 +27,23 @@ export function Footer() {
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
             <div className="flex items-center gap-2 mb-4">
-              <div className="h-9 w-9 rounded-lg gradient-hero flex items-center justify-center">
-                <Milk className="h-5 w-5 text-primary-foreground" />
+              <img 
+                src="/logo.png" 
+                alt="Syedom DFMS Logo" 
+                className="h-10 w-10 rounded-lg object-contain"
+              />
+              <div className="flex flex-col">
+                <span className="font-serif font-bold text-lg leading-tight">Syedom.com</span>
+                <span className="text-[10px] text-muted-foreground leading-tight">DFMS</span>
               </div>
-              <span className="font-serif font-bold text-xl">DairyFlow</span>
             </div>
             <p className="text-sm text-muted-foreground mb-4">
-              Modern dairy farm management made simple. Track production, deliveries, and payments effortlessly.
+              A free and simple dairy farm management system. Track production, deliveries, and payments effortlessly.
             </p>
             <div className="flex flex-col gap-2 text-sm text-muted-foreground">
-              <a href="mailto:support@dairyflow.app" className="flex items-center gap-2 hover:text-primary">
+              <a href="mailto:support@syedom.com" className="flex items-center gap-2 hover:text-primary">
                 <Mail className="h-4 w-4" />
-                support@dairyflow.app
+                support@syedom.com
               </a>
             </div>
           </div>
@@ -98,7 +103,7 @@ export function Footer() {
         {/* Bottom Bar */}
         <div className="mt-12 pt-8 border-t flex flex-col sm:flex-row justify-between items-center gap-4">
           <p className="text-sm text-muted-foreground">
-            © {currentYear} DairyFlow. All rights reserved.
+            © {currentYear} Syedom.com – DFMS. All rights reserved.
           </p>
           <p className="text-sm text-muted-foreground">
             Made with ❤️ for dairy farmers worldwide

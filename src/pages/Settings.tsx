@@ -1,14 +1,29 @@
+import { useState, useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { useNavigate } from "react-router-dom";
-import { User, Building, Bell, Shield, Download, Smartphone } from "lucide-react";
+import { User, Building, Download, Smartphone, Moon, Sun, Palette } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Settings() {
   const navigate = useNavigate();
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("theme");
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    setIsDarkMode(savedTheme === "dark" || (!savedTheme && prefersDark));
+  }, []);
+
+  const toggleDarkMode = (enabled: boolean) => {
+    setIsDarkMode(enabled);
+    localStorage.setItem("theme", enabled ? "dark" : "light");
+    document.documentElement.classList.toggle("dark", enabled);
+  };
 
   const handleSave = () => {
     toast.success("Settings saved successfully");
@@ -25,6 +40,42 @@ export default function Settings() {
           </p>
         </div>
 
+        {/* Appearance */}
+        <Card variant="elevated">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Palette className="h-5 w-5" />
+              Appearance
+            </CardTitle>
+            <CardDescription>
+              Customize how Syedom DFMS looks
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {isDarkMode ? (
+                  <Moon className="h-5 w-5 text-primary" />
+                ) : (
+                  <Sun className="h-5 w-5 text-warning" />
+                )}
+                <div>
+                  <Label htmlFor="darkMode" className="text-base font-medium">Dark Mode</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Better for night usage and outdoor visibility
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="darkMode"
+                checked={isDarkMode}
+                onCheckedChange={toggleDarkMode}
+                className="scale-125"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Farm Profile */}
         <Card variant="elevated">
           <CardHeader>
@@ -40,25 +91,25 @@ export default function Settings() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="farmName">Farm Name</Label>
-                <Input id="farmName" placeholder="e.g., Green Valley Dairy" defaultValue="My Dairy Farm" />
+                <Input id="farmName" placeholder="e.g., Green Valley Dairy" defaultValue="My Dairy Farm" className="h-12 text-base" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="ownerName">Owner Name</Label>
-                <Input id="ownerName" placeholder="Your name" />
+                <Input id="ownerName" placeholder="Your name" className="h-12 text-base" />
               </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="address">Farm Address</Label>
-              <Input id="address" placeholder="Full address" />
+              <Input id="address" placeholder="Full address" className="h-12 text-base" />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="phone">Phone Number</Label>
-                <Input id="phone" placeholder="+91 XXXXX XXXXX" />
+                <Input id="phone" placeholder="+92 XXX XXXXXXX" className="h-12 text-base" />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="defaultPrice">Default Price per Liter (₹)</Label>
-                <Input id="defaultPrice" type="number" placeholder="60" defaultValue="60" />
+                <Label htmlFor="defaultPrice">Default Price per Liter</Label>
+                <Input id="defaultPrice" type="number" placeholder="150" defaultValue="150" className="h-12 text-base" />
               </div>
             </div>
           </CardContent>
@@ -78,16 +129,16 @@ export default function Settings() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email Address</Label>
-              <Input id="email" type="email" placeholder="your@email.com" />
+              <Input id="email" type="email" placeholder="your@email.com" className="h-12 text-base" />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="currentPassword">Current Password</Label>
-                <Input id="currentPassword" type="password" placeholder="••••••••" />
+                <Input id="currentPassword" type="password" placeholder="••••••••" className="h-12 text-base" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="newPassword">New Password</Label>
-                <Input id="newPassword" type="password" placeholder="••••••••" />
+                <Input id="newPassword" type="password" placeholder="••••••••" className="h-12 text-base" />
               </div>
             </div>
           </CardContent>
@@ -101,15 +152,15 @@ export default function Settings() {
               Install Mobile App
             </CardTitle>
             <CardDescription>
-              Install DairyFlow on your phone for quick access
+              Install Syedom DFMS on your phone for quick access
             </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground mb-4">
-              Add DairyFlow to your home screen for the best mobile experience. 
+              Add Syedom DFMS to your home screen for the best mobile experience. 
               It works offline and feels just like a native app!
             </p>
-            <Button variant="outline" onClick={() => navigate("/install")}>
+            <Button variant="outline" size="lg" className="h-12" onClick={() => navigate("/install")}>
               <Smartphone className="h-4 w-4 mr-2" />
               Learn How to Install
             </Button>
@@ -129,15 +180,15 @@ export default function Settings() {
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-3">
-              <Button variant="outline">
+              <Button variant="outline" size="lg" className="h-12">
                 <Download className="h-4 w-4 mr-2" />
                 Export Customers
               </Button>
-              <Button variant="outline">
+              <Button variant="outline" size="lg" className="h-12">
                 <Download className="h-4 w-4 mr-2" />
                 Export Deliveries
               </Button>
-              <Button variant="outline">
+              <Button variant="outline" size="lg" className="h-12">
                 <Download className="h-4 w-4 mr-2" />
                 Export Payments
               </Button>
@@ -146,8 +197,8 @@ export default function Settings() {
         </Card>
 
         {/* Save Button */}
-        <div className="flex justify-end">
-          <Button variant="hero" size="lg" onClick={handleSave}>
+        <div className="flex justify-end pb-20 lg:pb-0">
+          <Button variant="hero" size="lg" className="h-14 text-base px-8" onClick={handleSave}>
             Save Changes
           </Button>
         </div>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { getAllFromStore, bulkPutInStore, getMetadata } from "@/lib/offlineDB";
 
 interface OfflineData {
   customers: any[];
@@ -7,9 +8,6 @@ interface OfflineData {
   payments: any[];
   lastSynced: string | null;
 }
-
-const STORAGE_KEY = "dairyflow_offline_data";
-const SESSION_KEY = "dairyflow_session";
 
 export function useOfflineStorage() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -37,82 +35,56 @@ export function useOfflineStorage() {
     };
   }, []);
 
-  const loadFromCache = useCallback(() => {
+  const loadFromCache = useCallback(async () => {
     try {
-      const cached = localStorage.getItem(STORAGE_KEY);
-      if (cached) {
-        setOfflineData(JSON.parse(cached));
-      }
+      const [customers, production, deliveries, payments, lastSyncTime] = await Promise.all([
+        getAllFromStore<any>("customers"),
+        getAllFromStore<any>("production"),
+        getAllFromStore<any>("deliveries"),
+        getAllFromStore<any>("payments"),
+        getMetadata("lastSyncTime"),
+      ]);
+
+      setOfflineData({
+        customers,
+        production,
+        deliveries,
+        payments,
+        lastSynced: lastSyncTime ? new Date(lastSyncTime).toISOString() : null,
+      });
     } catch (error) {
       console.error("Error loading from cache:", error);
     }
   }, []);
 
-  const saveToCache = useCallback((data: Partial<OfflineData>) => {
+  const saveToCache = useCallback(async (data: Partial<OfflineData>) => {
     try {
-      const newData = {
-        ...offlineData,
-        ...data,
-        lastSynced: new Date().toISOString(),
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newData));
-      setOfflineData(newData);
+      const promises: Promise<void>[] = [];
+
+      if (data.customers?.length) {
+        promises.push(bulkPutInStore("customers", data.customers));
+      }
+      if (data.production?.length) {
+        promises.push(bulkPutInStore("production", data.production));
+      }
+      if (data.deliveries?.length) {
+        promises.push(bulkPutInStore("deliveries", data.deliveries));
+      }
+      if (data.payments?.length) {
+        promises.push(bulkPutInStore("payments", data.payments));
+      }
+
+      await Promise.all(promises);
+      await loadFromCache();
     } catch (error) {
       console.error("Error saving to cache:", error);
     }
-  }, [offlineData]);
-
-  const saveSession = useCallback((session: any) => {
-    try {
-      if (session) {
-        localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-      }
-    } catch (error) {
-      console.error("Error saving session:", error);
-    }
-  }, []);
-
-  const getSession = useCallback(() => {
-    try {
-      const session = localStorage.getItem(SESSION_KEY);
-      return session ? JSON.parse(session) : null;
-    } catch (error) {
-      console.error("Error getting session:", error);
-      return null;
-    }
-  }, []);
-
-  const clearSession = useCallback(() => {
-    try {
-      localStorage.removeItem(SESSION_KEY);
-    } catch (error) {
-      console.error("Error clearing session:", error);
-    }
-  }, []);
-
-  const clearCache = useCallback(() => {
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-      setOfflineData({
-        customers: [],
-        production: [],
-        deliveries: [],
-        payments: [],
-        lastSynced: null,
-      });
-    } catch (error) {
-      console.error("Error clearing cache:", error);
-    }
-  }, []);
+  }, [loadFromCache]);
 
   return {
     isOnline,
     offlineData,
     loadFromCache,
     saveToCache,
-    saveSession,
-    getSession,
-    clearSession,
-    clearCache,
   };
 }

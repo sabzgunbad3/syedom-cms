@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useCurrency } from "@/contexts/CurrencyContext";
 import { supabase } from "@/integrations/supabase/client";
+import { saveLocalProfile, addPendingAction, UserProfile } from "@/lib/offlineDB";
 import { toast } from "sonner";
 
 interface SetupWizardProps {
@@ -67,25 +68,77 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
 
     setLoading(true);
     try {
-      // Update profile
-      const { error } = await supabase
-        .from("profiles")
-        .update({
-          full_name: formData.fullName,
-          farm_name: formData.farmName || null,
-          phone: formData.phone || null,
-        })
-        .eq("user_id", userId);
-
-      if (error) throw error;
-
-      // Set currency preference
-      setCurrency(formData.currency);
-
-      // Mark setup as complete
-      localStorage.setItem("dairyflow_setup_complete", "true");
+      // STEP 1: Save profile LOCALLY FIRST (offline-first)
+      const localProfile: UserProfile = {
+        userId,
+        fullName: formData.fullName,
+        farmName: formData.farmName || null,
+        phone: formData.phone || null,
+        setupComplete: true,
+        currency: formData.currency,
+        defaultRate: parseFloat(formData.defaultRate) || 60,
+      };
       
-      toast.success("Welcome to DairyFlow! Your farm is ready.");
+      await saveLocalProfile(localProfile);
+      
+      // Set currency preference locally
+      setCurrency(formData.currency);
+      localStorage.setItem("preferred_currency", formData.currency);
+      
+      // STEP 2: Try to sync to server (if online)
+      if (navigator.onLine) {
+        try {
+          const { error } = await supabase
+            .from("profiles")
+            .upsert({
+              user_id: userId,
+              full_name: formData.fullName,
+              farm_name: formData.farmName || null,
+              phone: formData.phone || null,
+            });
+
+          if (error) {
+            // Queue for later sync
+            await addPendingAction({
+              table: "profiles",
+              action: "update",
+              data: {
+                user_id: userId,
+                full_name: formData.fullName,
+                farm_name: formData.farmName || null,
+                phone: formData.phone || null,
+              },
+            });
+          }
+        } catch (error) {
+          console.error("Failed to sync profile to server:", error);
+          // Queue for later sync
+          await addPendingAction({
+            table: "profiles",
+            action: "update",
+            data: {
+              user_id: userId,
+              full_name: formData.fullName,
+              farm_name: formData.farmName || null,
+              phone: formData.phone || null,
+            },
+          });
+        }
+      } else {
+        // Offline - queue for sync
+        await addPendingAction({
+          table: "profiles",
+          action: "update",
+          data: {
+            user_id: userId,
+            full_name: formData.fullName,
+            farm_name: formData.farmName || null,
+            phone: formData.phone || null,
+          },
+        });
+      }
+      
+      toast.success("Welcome to DFMS! Your farm is ready.");
       onComplete();
     } catch (error: any) {
       console.error("Setup error:", error);
@@ -120,7 +173,7 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
           <div className="mx-auto h-14 w-14 rounded-2xl gradient-hero flex items-center justify-center mb-4">
             <Milk className="h-7 w-7 text-primary-foreground" />
           </div>
-          <DialogTitle className="text-2xl font-serif">Welcome to DairyFlow!</DialogTitle>
+          <DialogTitle className="text-2xl font-serif">Welcome to DFMS!</DialogTitle>
           <DialogDescription>
             Let's set up your farm in just a few steps
           </DialogDescription>
@@ -157,6 +210,7 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
                   placeholder="Enter your name"
                   value={formData.fullName}
                   onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                  className="h-12 text-base"
                 />
               </div>
               <div className="space-y-2">
@@ -165,8 +219,8 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
                   <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     id="phone"
-                    placeholder="+91 XXXXX XXXXX"
-                    className="pl-10"
+                    placeholder="+92 XXX XXXXXXX"
+                    className="pl-10 h-12 text-base"
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                   />
@@ -184,7 +238,7 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
                   <Input
                     id="farmName"
                     placeholder="e.g., Green Valley Dairy"
-                    className="pl-10"
+                    className="pl-10 h-12 text-base"
                     value={formData.farmName}
                     onChange={(e) => setFormData({ ...formData, farmName: e.target.value })}
                   />
@@ -197,7 +251,7 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
                   <Input
                     id="address"
                     placeholder="Enter your farm location"
-                    className="pl-10"
+                    className="pl-10 h-12 text-base"
                     value={formData.address}
                     onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                   />
@@ -209,6 +263,7 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
                   id="defaultRate"
                   type="number"
                   placeholder="60"
+                  className="h-12 text-base"
                   value={formData.defaultRate}
                   onChange={(e) => setFormData({ ...formData, defaultRate: e.target.value })}
                 />
@@ -224,7 +279,7 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
                   value={formData.currency}
                   onValueChange={(value) => setFormData({ ...formData, currency: value })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="h-12 text-base">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="max-h-60">
@@ -246,7 +301,7 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
                   <li>• Add customers from the Customers page</li>
                   <li>• Record daily production in Production</li>
                   <li>• Track deliveries and payments easily</li>
-                  <li>• Generate monthly reports anytime</li>
+                  <li>• Works offline - your data is always safe</li>
                 </ul>
               </div>
             </>
@@ -256,14 +311,14 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
         {/* Navigation */}
         <div className="flex gap-3 pt-4 border-t">
           {step > 1 && (
-            <Button variant="outline" onClick={handleBack}>
+            <Button variant="outline" onClick={handleBack} className="h-12">
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back
             </Button>
           )}
           <Button 
             variant="hero" 
-            className="flex-1" 
+            className="flex-1 h-12 text-base" 
             onClick={step < totalSteps ? handleNext : handleComplete}
             disabled={loading || (step === 1 && !formData.fullName)}
           >
@@ -274,7 +329,7 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
               </>
             ) : (
               <>
-                {loading ? "Setting up..." : "Start Using DairyFlow"}
+                {loading ? "Setting up..." : "Start Using DFMS"}
                 <Check className="h-4 w-4 ml-2" />
               </>
             )}

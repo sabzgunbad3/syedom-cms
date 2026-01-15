@@ -11,22 +11,25 @@ import {
   clearStore,
   setMetadata,
   getMetadata,
-  PendingAction,
 } from "@/lib/offlineDB";
 import { toast } from "sonner";
 
 export type SyncStatus = "idle" | "syncing" | "synced" | "failed" | "offline";
 
 export function useSyncEngine() {
-  const { user } = useAuth();
+  const { user, isOfflineSession } = useAuth();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(navigator.onLine ? "idle" : "offline");
   const [pendingCount, setPendingCount] = useState(0);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const syncInProgress = useRef(false);
+  const initialized = useRef(false);
 
   // Initialize DB and load pending count
   useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
+
     initDB().then(async () => {
       const actions = await getPendingActions();
       setPendingCount(actions.length);
@@ -34,7 +37,7 @@ export function useSyncEngine() {
       if (lastSync) {
         setLastSyncTime(new Date(lastSync));
       }
-    });
+    }).catch(console.error);
   }, []);
 
   // Online/Offline detection
@@ -42,9 +45,9 @@ export function useSyncEngine() {
     const handleOnline = () => {
       setIsOnline(true);
       setSyncStatus("idle");
-      // Auto-sync when back online
-      if (user) {
-        syncData();
+      // Auto-sync when back online (only if user is logged in and not in offline session)
+      if (user && !isOfflineSession) {
+        setTimeout(() => syncData(), 1000);
       }
     };
 
@@ -56,11 +59,16 @@ export function useSyncEngine() {
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
 
+    // Set initial state
+    if (!navigator.onLine) {
+      setSyncStatus("offline");
+    }
+
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [user]);
+  }, [user, isOfflineSession]);
 
   // Sync pending actions to server
   const syncPendingActions = async (): Promise<boolean> => {
@@ -82,11 +90,19 @@ export function useSyncEngine() {
             throw error;
           }
         } else if (action.action === "update") {
-          const { error } = await supabase
-            .from(action.table as any)
-            .update(action.data)
-            .eq("id", action.data.id);
-          if (error) throw error;
+          // Handle profile updates specially (using user_id instead of id)
+          if (action.table === "profiles") {
+            const { error } = await supabase
+              .from("profiles")
+              .upsert(action.data);
+            if (error) throw error;
+          } else {
+            const { error } = await supabase
+              .from(action.table as any)
+              .update(action.data)
+              .eq("id", action.data.id);
+            if (error) throw error;
+          }
         } else if (action.action === "delete") {
           const { error } = await supabase
             .from(action.table as any)
@@ -119,7 +135,7 @@ export function useSyncEngine() {
         supabase.from("payments").select("*, customer:customers(name)").eq("user_id", user.id),
       ]);
 
-      // Clear and repopulate stores
+      // Clear and repopulate stores (only if we got data)
       if (customersRes.data) {
         await clearStore("customers");
         await bulkPutInStore("customers", customersRes.data);
@@ -148,7 +164,7 @@ export function useSyncEngine() {
 
   // Main sync function
   const syncData = useCallback(async () => {
-    if (!isOnline || !user || syncInProgress.current) return;
+    if (!isOnline || !user || syncInProgress.current || isOfflineSession) return;
 
     syncInProgress.current = true;
     setSyncStatus("syncing");
@@ -164,9 +180,9 @@ export function useSyncEngine() {
       const actions = await getPendingActions();
       setPendingCount(actions.length);
 
-      if (pushSuccess) {
+      if (pushSuccess && actions.length === 0) {
         toast.success("Data synced successfully");
-      } else {
+      } else if (!pushSuccess) {
         toast.warning("Some changes failed to sync");
         setSyncStatus("failed");
       }
@@ -177,7 +193,7 @@ export function useSyncEngine() {
     } finally {
       syncInProgress.current = false;
     }
-  }, [isOnline, user]);
+  }, [isOnline, user, isOfflineSession]);
 
   // Update pending count
   const updatePendingCount = useCallback(async () => {

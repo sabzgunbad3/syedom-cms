@@ -1,6 +1,7 @@
 // IndexedDB-based offline storage with sync queue
-const DB_NAME = "dairyflow_db";
-const DB_VERSION = 2;
+// PRIMARY source of truth - server is for backup only
+const DB_NAME = "syedom_dfms_db";
+const DB_VERSION = 3;
 
 export interface PendingAction {
   id: string;
@@ -9,6 +10,25 @@ export interface PendingAction {
   data: any;
   timestamp: number;
   synced: boolean;
+}
+
+export interface LocalSession {
+  userId: string;
+  email: string;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  createdAt: number;
+}
+
+export interface UserProfile {
+  userId: string;
+  fullName: string;
+  farmName: string | null;
+  phone: string | null;
+  setupComplete: boolean;
+  currency: string;
+  defaultRate: number;
 }
 
 export interface OfflineStore {
@@ -21,18 +41,18 @@ export interface OfflineStore {
 }
 
 let db: IDBDatabase | null = null;
+let dbInitPromise: Promise<IDBDatabase> | null = null;
 
 export async function initDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    if (db) {
-      resolve(db);
-      return;
-    }
+  if (db) return db;
+  if (dbInitPromise) return dbInitPromise;
 
+  dbInitPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onerror = () => {
-      console.error("Failed to open IndexedDB");
+      console.error("Failed to open IndexedDB:", request.error);
+      dbInitPromise = null;
       reject(request.error);
     };
 
@@ -44,7 +64,7 @@ export async function initDB(): Promise<IDBDatabase> {
     request.onupgradeneeded = (event) => {
       const database = (event.target as IDBOpenDBRequest).result;
 
-      // Create object stores
+      // Core data stores
       if (!database.objectStoreNames.contains("customers")) {
         database.createObjectStore("customers", { keyPath: "id" });
       }
@@ -60,18 +80,35 @@ export async function initDB(): Promise<IDBDatabase> {
       if (!database.objectStoreNames.contains("payments")) {
         database.createObjectStore("payments", { keyPath: "id" });
       }
+      
+      // Sync queue
       if (!database.objectStoreNames.contains("pendingActions")) {
         const pendingStore = database.createObjectStore("pendingActions", { keyPath: "id" });
         pendingStore.createIndex("by_synced", "synced", { unique: false });
       }
+      
+      // Metadata store
       if (!database.objectStoreNames.contains("metadata")) {
         database.createObjectStore("metadata", { keyPath: "key" });
       }
+
+      // Auth and profile stores - CRITICAL for offline-first
+      if (!database.objectStoreNames.contains("session")) {
+        database.createObjectStore("session", { keyPath: "key" });
+      }
+      if (!database.objectStoreNames.contains("profile")) {
+        database.createObjectStore("profile", { keyPath: "userId" });
+      }
     };
   });
+
+  return dbInitPromise;
 }
 
-// Generic CRUD operations
+// ============================================
+// GENERIC CRUD OPERATIONS
+// ============================================
+
 export async function getAllFromStore<T>(storeName: string): Promise<T[]> {
   const database = await initDB();
   return new Promise((resolve, reject) => {
@@ -79,8 +116,11 @@ export async function getAllFromStore<T>(storeName: string): Promise<T[]> {
     const store = transaction.objectStore(storeName);
     const request = store.getAll();
 
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => {
+      console.error(`Failed to get all from ${storeName}:`, request.error);
+      resolve([]);
+    };
   });
 }
 
@@ -92,7 +132,10 @@ export async function getFromStore<T>(storeName: string, id: string): Promise<T 
     const request = store.get(id);
 
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      console.error(`Failed to get from ${storeName}:`, request.error);
+      resolve(undefined);
+    };
   });
 }
 
@@ -104,7 +147,10 @@ export async function putInStore<T>(storeName: string, data: T): Promise<void> {
     const request = store.put(data);
 
     request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      console.error(`Failed to put in ${storeName}:`, request.error);
+      reject(request.error);
+    };
   });
 }
 
@@ -116,7 +162,10 @@ export async function deleteFromStore(storeName: string, id: string): Promise<vo
     const request = store.delete(id);
 
     request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      console.error(`Failed to delete from ${storeName}:`, request.error);
+      reject(request.error);
+    };
   });
 }
 
@@ -128,11 +177,16 @@ export async function clearStore(storeName: string): Promise<void> {
     const request = store.clear();
 
     request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      console.error(`Failed to clear ${storeName}:`, request.error);
+      reject(request.error);
+    };
   });
 }
 
 export async function bulkPutInStore<T>(storeName: string, items: T[]): Promise<void> {
+  if (!items.length) return;
+  
   const database = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = database.transaction(storeName, "readwrite");
@@ -143,11 +197,55 @@ export async function bulkPutInStore<T>(storeName: string, items: T[]): Promise<
     });
 
     transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
+    transaction.onerror = () => {
+      console.error(`Failed to bulk put in ${storeName}:`, transaction.error);
+      reject(transaction.error);
+    };
   });
 }
 
-// Pending Actions Queue
+// ============================================
+// SESSION MANAGEMENT - CRITICAL FOR OFFLINE AUTH
+// ============================================
+
+export async function saveLocalSession(session: LocalSession): Promise<void> {
+  await putInStore("session", { key: "current", ...session });
+}
+
+export async function getLocalSession(): Promise<LocalSession | null> {
+  const data = await getFromStore<{ key: string } & LocalSession>("session", "current");
+  if (!data) return null;
+  
+  const { key, ...session } = data;
+  return session;
+}
+
+export async function clearLocalSession(): Promise<void> {
+  await deleteFromStore("session", "current");
+}
+
+// ============================================
+// PROFILE MANAGEMENT - LOCAL FIRST
+// ============================================
+
+export async function saveLocalProfile(profile: UserProfile): Promise<void> {
+  await putInStore("profile", profile);
+}
+
+export async function getLocalProfile(userId: string): Promise<UserProfile | null> {
+  const profile = await getFromStore<UserProfile>("profile", userId);
+  return profile || null;
+}
+
+export async function isSetupComplete(userId: string): Promise<boolean> {
+  const profile = await getLocalProfile(userId);
+  return profile?.setupComplete || false;
+}
+
+// ============================================
+// PENDING ACTIONS QUEUE
+// ============================================
+
 export async function addPendingAction(action: Omit<PendingAction, "id" | "timestamp" | "synced">): Promise<void> {
   const pendingAction: PendingAction = {
     ...action,
@@ -179,7 +277,10 @@ export async function clearSyncedActions(): Promise<void> {
   }
 }
 
-// Metadata operations
+// ============================================
+// METADATA OPERATIONS
+// ============================================
+
 export async function getMetadata(key: string): Promise<any> {
   const data = await getFromStore<{ key: string; value: any }>("metadata", key);
   return data?.value;
@@ -189,7 +290,10 @@ export async function setMetadata(key: string, value: any): Promise<void> {
   await putInStore("metadata", { key, value });
 }
 
-// Query by index
+// ============================================
+// QUERY BY INDEX
+// ============================================
+
 export async function getByIndex<T>(storeName: string, indexName: string, value: any): Promise<T[]> {
   const database = await initDB();
   return new Promise((resolve, reject) => {
@@ -198,7 +302,27 @@ export async function getByIndex<T>(storeName: string, indexName: string, value:
     const index = store.index(indexName);
     const request = index.getAll(value);
 
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => {
+      console.error(`Failed to get by index from ${storeName}:`, request.error);
+      resolve([]);
+    };
   });
+}
+
+// ============================================
+// CLEAR ALL DATA (for logout)
+// ============================================
+
+export async function clearAllData(): Promise<void> {
+  await Promise.all([
+    clearStore("customers"),
+    clearStore("deliveries"),
+    clearStore("production"),
+    clearStore("payments"),
+    clearStore("pendingActions"),
+    clearStore("metadata"),
+    clearStore("session"),
+    clearStore("profile"),
+  ]);
 }

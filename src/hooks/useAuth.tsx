@@ -8,6 +8,7 @@ import {
   clearLocalSession,
   getLocalProfile,
   isSetupComplete,
+  isAppSetupComplete,
   clearAllData,
   LocalSession,
 } from "@/lib/offlineDB";
@@ -54,6 +55,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const restoreLocalSession = useCallback(async (): Promise<boolean> => {
     try {
       await initDB();
+      
+      // STEP 1: Check GLOBAL app state first (before any user-specific data)
+      const globalSetupDone = await isAppSetupComplete();
+      
       const localSession = await getLocalSession();
       
       if (localSession && localSession.userId) {
@@ -72,8 +77,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(offlineUser);
           setIsOfflineSession(true);
           
-          // Check if setup is complete
-          const setupDone = await isSetupComplete(localSession.userId);
+          // Use global app state for setup check (most reliable)
+          // Falls back to user profile check if global state missing
+          const setupDone = globalSetupDone || await isSetupComplete(localSession.userId);
           setIsFirstLogin(!setupDone);
           
           return true;
@@ -139,8 +145,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               const adminStatus = await checkAdminRole(currentSession.user.id);
               setIsAdmin(adminStatus);
               
-              // Check setup status
-              const setupDone = await isSetupComplete(currentSession.user.id);
+              // Check setup status - GLOBAL first, then user-specific
+              const globalSetupDone = await isAppSetupComplete();
+              const setupDone = globalSetupDone || await isSetupComplete(currentSession.user.id);
               setIsFirstLogin(!setupDone);
             }, 0);
           } else if (event === "SIGNED_OUT") {
@@ -174,7 +181,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (mounted) setIsAdmin(adminStatus);
           });
           
-          const setupDone = await isSetupComplete(initialSession.user.id);
+          // Check setup status - GLOBAL first
+          const globalSetupDone = await isAppSetupComplete();
+          const setupDone = globalSetupDone || await isSetupComplete(initialSession.user.id);
           setIsFirstLogin(!setupDone);
         } else if (!hasLocalSession) {
           // No session anywhere - user needs to log in
@@ -255,8 +264,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Persist session immediately for offline use
       await persistSession(data.session);
       
-      // Check if first login
-      const setupDone = await isSetupComplete(data.user.id);
+      // Check if first login - GLOBAL first
+      const globalSetupDone = await isAppSetupComplete();
+      const setupDone = globalSetupDone || await isSetupComplete(data.user.id);
       setIsFirstLogin(!setupDone);
     }
     

@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { useCurrency } from "@/contexts/CurrencyContext";
 import { supabase } from "@/integrations/supabase/client";
-import { saveLocalProfile, addPendingAction, UserProfile } from "@/lib/offlineDB";
+import { saveLocalProfile, addPendingAction, UserProfile, markSetupComplete } from "@/lib/offlineDB";
 import { toast } from "sonner";
 
 interface SetupWizardProps {
@@ -68,7 +68,13 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
 
     setLoading(true);
     try {
-      // STEP 1: Save profile LOCALLY FIRST (offline-first)
+      // Generate a unique farm ID that never changes
+      const farmId = crypto.randomUUID();
+      
+      // STEP 1: Mark setup as complete GLOBALLY (this is the lock)
+      await markSetupComplete(farmId);
+      
+      // STEP 2: Save profile LOCALLY (offline-first)
       const localProfile: UserProfile = {
         userId,
         fullName: formData.fullName,

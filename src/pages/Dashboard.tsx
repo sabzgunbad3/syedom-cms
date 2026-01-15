@@ -13,7 +13,7 @@ import { usePayments } from "@/hooks/usePayments";
 import { useSyncEngine } from "@/hooks/useSyncEngine";
 import { useCurrency } from "@/contexts/CurrencyContext";
 import { SetupWizard } from "@/components/onboarding/SetupWizard";
-import { getAllFromStore } from "@/lib/offlineDB";
+import { getAllFromStore, isAppSetupComplete } from "@/lib/offlineDB";
 import { Milk, Users, Truck, Plus, ArrowRight, AlertCircle, WifiOff, RefreshCw } from "lucide-react";
 
 export default function Dashboard() {
@@ -34,6 +34,10 @@ export default function Dashboard() {
     payments: any[];
   } | null>(null);
   const loadedFromCache = useRef(false);
+  
+  // Double-check setup status from app state (belt and suspenders)
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
+  const checkedSetup = useRef(false);
 
   // STEP 1: Load from local cache immediately (OFFLINE-FIRST)
   useEffect(() => {
@@ -63,6 +67,30 @@ export default function Dashboard() {
     loadLocalData();
   }, []);
 
+  // STEP 2: Verify setup status from GLOBAL app state (not just auth hook)
+  useEffect(() => {
+    if (checkedSetup.current || !user) return;
+    checkedSetup.current = true;
+
+    const verifySetup = async () => {
+      const globalSetupDone = await isAppSetupComplete();
+      
+      // Only show wizard if BOTH global state AND auth hook say it's first login
+      // This prevents wizard from ever showing after setup is complete
+      if (!globalSetupDone && isFirstLogin) {
+        setShowSetupWizard(true);
+      } else {
+        setShowSetupWizard(false);
+        // If auth hook thinks it's first login but global state says no, fix it
+        if (isFirstLogin && globalSetupDone) {
+          setIsFirstLogin(false);
+        }
+      }
+    };
+
+    verifySetup();
+  }, [user, isFirstLogin, setIsFirstLogin]);
+
   // Redirect to auth if no user and not loading
   useEffect(() => {
     if (!authLoading && !user) {
@@ -75,7 +103,10 @@ export default function Dashboard() {
     navigate("/"); 
   };
   
-  const handleSetupComplete = () => setIsFirstLogin(false);
+  const handleSetupComplete = () => {
+    setShowSetupWizard(false);
+    setIsFirstLogin(false);
+  };
 
   // Use local data or fetched data
   const displayCustomers = customers.length > 0 ? customers : (localData?.customers || []);
@@ -143,7 +174,10 @@ export default function Dashboard() {
 
   return (
     <DashboardLayout onLogout={handleLogout}>
-      {user && isFirstLogin && <SetupWizard open={isFirstLogin} onComplete={handleSetupComplete} userId={user.id} />}
+      {/* Setup Wizard - ONLY shows if global app state says setup is NOT complete */}
+      {user && showSetupWizard && (
+        <SetupWizard open={showSetupWizard} onComplete={handleSetupComplete} userId={user.id} />
+      )}
 
       <div className="space-y-8 animate-fade-in">
         {/* Offline/Sync Status Banner */}

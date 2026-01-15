@@ -1,7 +1,22 @@
 // IndexedDB-based offline storage with sync queue
 // PRIMARY source of truth - server is for backup only
 const DB_NAME = "syedom_dfms_db";
-const DB_VERSION = 3;
+const DB_VERSION = 4; // Bumped for app_state store
+
+// ============================================
+// APP STATE - CRITICAL SETUP LOCK
+// ============================================
+// This is checked BEFORE any API calls or user data
+// Once setupCompleted = true, wizard NEVER shows again
+// Sample data is FORBIDDEN after setup
+
+export interface AppState {
+  key: string; // Always "global"
+  setupCompleted: boolean;
+  farmId: string | null; // Generated ONCE, never changes
+  createdAt: number;
+  updatedAt: number;
+}
 
 export interface PendingAction {
   id: string;
@@ -98,6 +113,11 @@ export async function initDB(): Promise<IDBDatabase> {
       }
       if (!database.objectStoreNames.contains("profile")) {
         database.createObjectStore("profile", { keyPath: "userId" });
+      }
+      
+      // APP STATE - Global setup lock (checked BEFORE user data)
+      if (!database.objectStoreNames.contains("app_state")) {
+        database.createObjectStore("app_state", { keyPath: "key" });
       }
     };
   });
@@ -238,8 +258,50 @@ export async function getLocalProfile(userId: string): Promise<UserProfile | nul
 }
 
 export async function isSetupComplete(userId: string): Promise<boolean> {
+  // PRIORITY 1: Check global app state (most reliable)
+  const appState = await getAppState();
+  if (appState?.setupCompleted) return true;
+  
+  // PRIORITY 2: Fall back to profile check
   const profile = await getLocalProfile(userId);
   return profile?.setupComplete || false;
+}
+
+// ============================================
+// APP STATE MANAGEMENT - GLOBAL SETUP LOCK
+// ============================================
+
+export async function getAppState(): Promise<AppState | null> {
+  const state = await getFromStore<AppState>("app_state", "global");
+  return state || null;
+}
+
+export async function saveAppState(state: Partial<AppState>): Promise<void> {
+  const existing = await getAppState();
+  const now = Date.now();
+  
+  const newState: AppState = {
+    key: "global",
+    setupCompleted: state.setupCompleted ?? existing?.setupCompleted ?? false,
+    farmId: state.farmId ?? existing?.farmId ?? null,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+  
+  await putInStore("app_state", newState);
+}
+
+export async function markSetupComplete(farmId?: string): Promise<void> {
+  const existing = await getAppState();
+  await saveAppState({
+    setupCompleted: true,
+    farmId: farmId || existing?.farmId || crypto.randomUUID(),
+  });
+}
+
+export async function isAppSetupComplete(): Promise<boolean> {
+  const state = await getAppState();
+  return state?.setupCompleted === true;
 }
 
 // ============================================
@@ -324,5 +386,6 @@ export async function clearAllData(): Promise<void> {
     clearStore("metadata"),
     clearStore("session"),
     clearStore("profile"),
+    clearStore("app_state"), // Also clear setup lock on logout
   ]);
 }

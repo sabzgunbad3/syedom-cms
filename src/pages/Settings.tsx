@@ -8,10 +8,57 @@ import { Switch } from "@/components/ui/switch";
 import { useNavigate } from "react-router-dom";
 import { User, Building, Download, Smartphone, Moon, Sun, Palette } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
+import { getLocalProfile, saveLocalProfile, addPendingAction, UserProfile } from "@/lib/offlineDB";
+import { supabase } from "@/integrations/supabase/client";
 
 export default function Settings() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  
+  // Farm profile state - loaded from LOCAL storage (not defaults)
+  const [formData, setFormData] = useState({
+    farmName: "",
+    ownerName: "",
+    address: "",
+    phone: "",
+    defaultPrice: "",
+  });
+
+  // Load profile from LOCAL storage first (offline-first)
+  useEffect(() => {
+    const loadLocalProfile = async () => {
+      if (!user?.id) {
+        setIsLoading(false);
+        return;
+      }
+      
+      try {
+        const localProfile = await getLocalProfile(user.id);
+        
+        if (localProfile) {
+          // USE LOCAL DATA - never show sample defaults after setup
+          setFormData({
+            farmName: localProfile.farmName || "",
+            ownerName: localProfile.fullName || "",
+            address: "", // Not stored in profile, could add later
+            phone: localProfile.phone || "",
+            defaultPrice: localProfile.defaultRate?.toString() || "",
+          });
+        }
+        // If no local profile, leave form empty (don't show sample data)
+      } catch (error) {
+        console.error("Failed to load profile:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadLocalProfile();
+  }, [user?.id]);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("theme");
@@ -25,8 +72,76 @@ export default function Settings() {
     document.documentElement.classList.toggle("dark", enabled);
   };
 
-  const handleSave = () => {
-    toast.success("Settings saved successfully");
+  const handleSave = async () => {
+    if (!user?.id) {
+      toast.error("Please log in to save settings");
+      return;
+    }
+    
+    setIsSaving(true);
+    
+    try {
+      // Get existing profile to preserve setupComplete flag
+      const existingProfile = await getLocalProfile(user.id);
+      
+      // SAVE LOCALLY FIRST (offline-first)
+      const updatedProfile: UserProfile = {
+        userId: user.id,
+        fullName: formData.ownerName || existingProfile?.fullName || "",
+        farmName: formData.farmName || null,
+        phone: formData.phone || null,
+        setupComplete: existingProfile?.setupComplete ?? true, // Preserve setup status
+        currency: existingProfile?.currency || "PKR",
+        defaultRate: parseFloat(formData.defaultPrice) || existingProfile?.defaultRate || 60,
+      };
+      
+      await saveLocalProfile(updatedProfile);
+      
+      // Try to sync to server (if online)
+      if (navigator.onLine) {
+        try {
+          await supabase
+            .from("profiles")
+            .upsert({
+              user_id: user.id,
+              full_name: formData.ownerName,
+              farm_name: formData.farmName || null,
+              phone: formData.phone || null,
+            });
+        } catch (error) {
+          // Queue for later sync
+          await addPendingAction({
+            table: "profiles",
+            action: "update",
+            data: {
+              user_id: user.id,
+              full_name: formData.ownerName,
+              farm_name: formData.farmName || null,
+              phone: formData.phone || null,
+            },
+          });
+        }
+      } else {
+        // Offline - queue for sync
+        await addPendingAction({
+          table: "profiles",
+          action: "update",
+          data: {
+            user_id: user.id,
+            full_name: formData.ownerName,
+            farm_name: formData.farmName || null,
+            phone: formData.phone || null,
+          },
+        });
+      }
+      
+      toast.success("Settings saved successfully");
+    } catch (error) {
+      console.error("Failed to save settings:", error);
+      toast.error("Failed to save settings");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -91,25 +206,56 @@ export default function Settings() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="farmName">Farm Name</Label>
-                <Input id="farmName" placeholder="e.g., Green Valley Dairy" defaultValue="My Dairy Farm" className="h-12 text-base" />
+                <Input 
+                  id="farmName" 
+                  placeholder="e.g., Green Valley Dairy" 
+                  value={formData.farmName}
+                  onChange={(e) => setFormData({ ...formData, farmName: e.target.value })}
+                  className="h-12 text-base" 
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="ownerName">Owner Name</Label>
-                <Input id="ownerName" placeholder="Your name" className="h-12 text-base" />
+                <Input 
+                  id="ownerName" 
+                  placeholder="Your name" 
+                  value={formData.ownerName}
+                  onChange={(e) => setFormData({ ...formData, ownerName: e.target.value })}
+                  className="h-12 text-base" 
+                />
               </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="address">Farm Address</Label>
-              <Input id="address" placeholder="Full address" className="h-12 text-base" />
+              <Input 
+                id="address" 
+                placeholder="Full address" 
+                value={formData.address}
+                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                className="h-12 text-base" 
+              />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="phone">Phone Number</Label>
-                <Input id="phone" placeholder="+92 XXX XXXXXXX" className="h-12 text-base" />
+                <Input 
+                  id="phone" 
+                  placeholder="+92 XXX XXXXXXX" 
+                  value={formData.phone}
+                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                  className="h-12 text-base" 
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="defaultPrice">Default Price per Liter</Label>
-                <Input id="defaultPrice" type="number" placeholder="150" defaultValue="150" className="h-12 text-base" />
+                <Input 
+                  id="defaultPrice" 
+                  type="number" 
+                  placeholder="60" 
+                  value={formData.defaultPrice}
+                  onChange={(e) => setFormData({ ...formData, defaultPrice: e.target.value })}
+                  className="h-12 text-base" 
+                />
               </div>
             </div>
           </CardContent>
@@ -198,8 +344,14 @@ export default function Settings() {
 
         {/* Save Button */}
         <div className="flex justify-end pb-20 lg:pb-0">
-          <Button variant="hero" size="lg" className="h-14 text-base px-8" onClick={handleSave}>
-            Save Changes
+          <Button 
+            variant="hero" 
+            size="lg" 
+            className="h-14 text-base px-8" 
+            onClick={handleSave}
+            disabled={isSaving}
+          >
+            {isSaving ? "Saving..." : "Save Changes"}
           </Button>
         </div>
       </div>

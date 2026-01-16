@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { BetaBadge } from "@/components/ui/beta-badge";
 import { Menu, Moon, Sun, Download } from "lucide-react";
 
 export function Header() {
@@ -73,7 +74,10 @@ export function Header() {
             className="h-10 w-10 rounded-lg object-contain"
           />
           <div className="flex flex-col">
-            <span className="font-serif font-bold text-lg leading-tight">Syedom.com</span>
+            <div className="flex items-center gap-1.5">
+              <span className="font-serif font-bold text-lg leading-tight">Syedom.com</span>
+              <BetaBadge />
+            </div>
             <span className="text-[10px] text-muted-foreground leading-tight">DFMS</span>
           </div>
         </a>

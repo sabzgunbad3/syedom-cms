@@ -6,18 +6,25 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useNavigate } from "react-router-dom";
-import { User, Building, Download, Smartphone, Moon, Sun, Palette } from "lucide-react";
+import { User, Building, Download, Smartphone, Moon, Sun, Palette, Trash2, AlertTriangle, Clock, Zap, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { getLocalProfile, saveLocalProfile, addPendingAction, UserProfile } from "@/lib/offlineDB";
+import { getLocalProfile, saveLocalProfile, addPendingAction, UserProfile, getWorkflowMode, setWorkflowMode, WorkflowMode } from "@/lib/offlineDB";
 import { supabase } from "@/integrations/supabase/client";
-
+import { DeleteAccountDialog } from "@/components/settings/DeleteAccountDialog";
+import { DeleteDataDialog } from "@/components/settings/DeleteDataDialog";
+import { cn } from "@/lib/utils";
 export default function Settings() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [workflowMode, setWorkflowModeState] = useState<WorkflowMode>("balanced");
+  
+  // Delete dialogs
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
+  const [deleteDataType, setDeleteDataType] = useState<"deliveries" | "payments" | "production" | "customers" | null>(null);
   
   // Farm profile state - loaded from LOCAL storage (not defaults)
   const [formData, setFormData] = useState({
@@ -30,14 +37,19 @@ export default function Settings() {
 
   // Load profile from LOCAL storage first (offline-first)
   useEffect(() => {
-    const loadLocalProfile = async () => {
+    const loadLocalData = async () => {
       if (!user?.id) {
         setIsLoading(false);
         return;
       }
       
       try {
-        const localProfile = await getLocalProfile(user.id);
+        const [localProfile, mode] = await Promise.all([
+          getLocalProfile(user.id),
+          getWorkflowMode(),
+        ]);
+        
+        setWorkflowModeState(mode);
         
         if (localProfile) {
           // USE LOCAL DATA - never show sample defaults after setup
@@ -57,8 +69,18 @@ export default function Settings() {
       }
     };
 
-    loadLocalProfile();
+    loadLocalData();
   }, [user?.id]);
+
+  const handleWorkflowModeChange = async (mode: WorkflowMode) => {
+    setWorkflowModeState(mode);
+    await setWorkflowMode(mode);
+    toast.success("Workflow mode updated");
+  };
+
+  const handleAccountDeleted = () => {
+    navigate("/");
+  };
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("theme");
@@ -313,6 +335,41 @@ export default function Settings() {
           </CardContent>
         </Card>
 
+        {/* Workflow Mode */}
+        <Card variant="elevated">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5" />
+              Daily Workflow Mode
+            </CardTitle>
+            <CardDescription>
+              How much time do you have for daily entries?
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {[
+              { id: "quick" as WorkflowMode, title: "Quick Mode", desc: "Just mark who didn't get milk", icon: Zap, color: "text-success" },
+              { id: "balanced" as WorkflowMode, title: "Balanced Mode", desc: "Mark missed + adjust quantities", icon: Clock, color: "text-primary" },
+              { id: "detailed" as WorkflowMode, title: "Detailed Mode", desc: "Full control with custom inputs", icon: Settings2, color: "text-accent" },
+            ].map((mode) => (
+              <button
+                key={mode.id}
+                onClick={() => handleWorkflowModeChange(mode.id)}
+                className={cn(
+                  "w-full flex items-center gap-3 p-4 rounded-xl border transition-all text-left",
+                  workflowMode === mode.id ? "bg-primary/10 border-primary/30" : "bg-card border-border"
+                )}
+              >
+                <mode.icon className={cn("h-5 w-5", mode.color)} />
+                <div className="flex-1">
+                  <p className="font-medium">{mode.title}</p>
+                  <p className="text-sm text-muted-foreground">{mode.desc}</p>
+                </div>
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+
         {/* Export Data */}
         <Card variant="elevated">
           <CardHeader>
@@ -342,6 +399,69 @@ export default function Settings() {
           </CardContent>
         </Card>
 
+        {/* Danger Zone */}
+        <Card variant="elevated" className="border-destructive/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+              Danger Zone
+            </CardTitle>
+            <CardDescription>
+              Permanently delete your data
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Button
+                variant="outline"
+                className="h-12 border-destructive/30 text-destructive hover:bg-destructive/10"
+                onClick={() => setDeleteDataType("deliveries")}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Deliveries
+              </Button>
+              <Button
+                variant="outline"
+                className="h-12 border-destructive/30 text-destructive hover:bg-destructive/10"
+                onClick={() => setDeleteDataType("payments")}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Payments
+              </Button>
+              <Button
+                variant="outline"
+                className="h-12 border-destructive/30 text-destructive hover:bg-destructive/10"
+                onClick={() => setDeleteDataType("customers")}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Customers
+              </Button>
+              <Button
+                variant="outline"
+                className="h-12 border-destructive/30 text-destructive hover:bg-destructive/10"
+                onClick={() => setDeleteDataType("production")}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Production
+              </Button>
+            </div>
+            
+            <div className="pt-4 border-t border-destructive/20">
+              <Button
+                variant="destructive"
+                className="w-full h-14"
+                onClick={() => setShowDeleteAccount(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete My Account
+              </Button>
+              <p className="text-xs text-muted-foreground text-center mt-2">
+                This will permanently delete all your data and cannot be undone.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Save Button */}
         <div className="flex justify-end pb-20 lg:pb-0">
           <Button 
@@ -354,6 +474,29 @@ export default function Settings() {
             {isSaving ? "Saving..." : "Save Changes"}
           </Button>
         </div>
+
+        {/* Delete Account Dialog */}
+        {user && (
+          <DeleteAccountDialog
+            open={showDeleteAccount}
+            onOpenChange={setShowDeleteAccount}
+            userId={user.id}
+            onDeleted={handleAccountDeleted}
+          />
+        )}
+
+        {/* Delete Data Dialog */}
+        {user && deleteDataType && (
+          <DeleteDataDialog
+            open={!!deleteDataType}
+            onOpenChange={(open) => !open && setDeleteDataType(null)}
+            userId={user.id}
+            dataType={deleteDataType}
+            title={`Delete All ${deleteDataType.charAt(0).toUpperCase() + deleteDataType.slice(1)}?`}
+            description={`This will permanently delete all your ${deleteDataType} records.`}
+            onDeleted={() => {}}
+          />
+        )}
       </div>
     </DashboardLayout>
   );

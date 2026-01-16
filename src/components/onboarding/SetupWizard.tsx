@@ -19,18 +19,52 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { 
   Milk, Building, User, Check, ArrowRight, ArrowLeft,
-  Phone, MapPin, Globe
+  Phone, MapPin, Globe, Clock, Zap, Settings2
 } from "lucide-react";
 import { useCurrency } from "@/contexts/CurrencyContext";
 import { supabase } from "@/integrations/supabase/client";
-import { saveLocalProfile, addPendingAction, UserProfile, markSetupComplete } from "@/lib/offlineDB";
+import { saveLocalProfile, addPendingAction, UserProfile, markSetupComplete, saveAppState, WorkflowMode } from "@/lib/offlineDB";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface SetupWizardProps {
   open: boolean;
   onComplete: () => void;
   userId: string;
 }
+
+const WORKFLOW_MODES = [
+  {
+    id: "quick" as WorkflowMode,
+    title: "Very Less Time",
+    subtitle: "Quick Mode",
+    description: "Just mark who DIDN'T get milk. Everyone else = full delivery.",
+    icon: Zap,
+    color: "text-success",
+    bgColor: "bg-success/10",
+    borderColor: "border-success/30",
+  },
+  {
+    id: "balanced" as WorkflowMode,
+    title: "Normal Time",
+    subtitle: "Balanced Mode",
+    description: "Mark missed + adjust quantity with +/- buttons.",
+    icon: Clock,
+    color: "text-primary",
+    bgColor: "bg-primary/10",
+    borderColor: "border-primary/30",
+  },
+  {
+    id: "detailed" as WorkflowMode,
+    title: "Full Time",
+    subtitle: "Detailed Mode",
+    description: "Enter custom quantity, prices, and notes for each customer.",
+    icon: Settings2,
+    color: "text-accent",
+    bgColor: "bg-accent/10",
+    borderColor: "border-accent/30",
+  },
+];
 
 export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
   const { currencies, setCurrency, currency } = useCurrency();
@@ -43,9 +77,10 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
     address: "",
     defaultRate: "60",
     currency: currency.code,
+    workflowMode: "balanced" as WorkflowMode,
   });
 
-  const totalSteps = 3;
+  const totalSteps = 4; // Added workflow mode step
   const progress = (step / totalSteps) * 100;
 
   const handleNext = () => {
@@ -71,10 +106,15 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
       // Generate a unique farm ID that never changes
       const farmId = crypto.randomUUID();
       
-      // STEP 1: Mark setup as complete GLOBALLY (this is the lock)
+      // STEP 1: Save workflow mode preference
+      await saveAppState({
+        workflowMode: formData.workflowMode,
+      });
+      
+      // STEP 2: Mark setup as complete GLOBALLY (this is the lock)
       await markSetupComplete(farmId);
       
-      // STEP 2: Save profile LOCALLY (offline-first)
+      // STEP 3: Save profile LOCALLY (offline-first)
       const localProfile: UserProfile = {
         userId,
         fullName: formData.fullName,
@@ -91,7 +131,7 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
       setCurrency(formData.currency);
       localStorage.setItem("preferred_currency", formData.currency);
       
-      // STEP 2: Try to sync to server (if online)
+      // STEP 4: Try to sync to server (if online)
       if (navigator.onLine) {
         try {
           const { error } = await supabase
@@ -164,6 +204,11 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
       title: "Farm Details",
       description: "Set up your dairy farm profile",
       icon: Building,
+    },
+    {
+      title: "Daily Workflow",
+      description: "How much time do you have?",
+      icon: Clock,
     },
     {
       title: "Preferences",
@@ -278,6 +323,49 @@ export function SetupWizard({ open, onComplete, userId }: SetupWizardProps) {
           )}
 
           {step === 3 && (
+            <div className="space-y-3">
+              <Label className="text-base font-medium">
+                How much time do you usually have daily?
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                This helps us simplify your daily workflow
+              </p>
+              <div className="space-y-2">
+                {WORKFLOW_MODES.map((mode) => (
+                  <button
+                    key={mode.id}
+                    onClick={() => setFormData({ ...formData, workflowMode: mode.id })}
+                    className={cn(
+                      "w-full flex items-start gap-3 p-4 rounded-xl border transition-all text-left active:scale-[0.98]",
+                      formData.workflowMode === mode.id
+                        ? `${mode.bgColor} ${mode.borderColor} ring-1 ring-offset-0`
+                        : "bg-card border-border hover:border-primary/30"
+                    )}
+                  >
+                    <div className={cn("p-2 rounded-lg", mode.bgColor)}>
+                      <mode.icon className={cn("h-5 w-5", mode.color)} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium">{mode.title}</p>
+                        <span className={cn("text-xs px-2 py-0.5 rounded-full", mode.bgColor, mode.color)}>
+                          {mode.subtitle}
+                        </span>
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-0.5">
+                        {mode.description}
+                      </p>
+                    </div>
+                    {formData.workflowMode === mode.id && (
+                      <Check className={cn("h-5 w-5 shrink-0", mode.color)} />
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {step === 4 && (
             <>
               <div className="space-y-2">
                 <Label>Select Currency</Label>

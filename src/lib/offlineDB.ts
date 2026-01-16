@@ -10,10 +10,14 @@ const DB_VERSION = 4; // Bumped for app_state store
 // Once setupCompleted = true, wizard NEVER shows again
 // Sample data is FORBIDDEN after setup
 
+export type WorkflowMode = "quick" | "balanced" | "detailed";
+
 export interface AppState {
   key: string; // Always "global"
   setupCompleted: boolean;
   farmId: string | null; // Generated ONCE, never changes
+  workflowMode: WorkflowMode; // Farmer's preferred workflow
+  lastDailyPopupDate: string | null; // YYYY-MM-DD - prevents showing popup twice same day
   createdAt: number;
   updatedAt: number;
 }
@@ -284,11 +288,33 @@ export async function saveAppState(state: Partial<AppState>): Promise<void> {
     key: "global",
     setupCompleted: state.setupCompleted ?? existing?.setupCompleted ?? false,
     farmId: state.farmId ?? existing?.farmId ?? null,
+    workflowMode: state.workflowMode ?? existing?.workflowMode ?? "balanced",
+    lastDailyPopupDate: state.lastDailyPopupDate ?? existing?.lastDailyPopupDate ?? null,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
   
   await putInStore("app_state", newState);
+}
+
+export async function getWorkflowMode(): Promise<WorkflowMode> {
+  const state = await getAppState();
+  return state?.workflowMode || "balanced";
+}
+
+export async function setWorkflowMode(mode: WorkflowMode): Promise<void> {
+  await saveAppState({ workflowMode: mode });
+}
+
+export async function shouldShowDailyPopup(): Promise<boolean> {
+  const state = await getAppState();
+  const today = new Date().toISOString().split("T")[0];
+  return state?.lastDailyPopupDate !== today;
+}
+
+export async function markDailyPopupShown(): Promise<void> {
+  const today = new Date().toISOString().split("T")[0];
+  await saveAppState({ lastDailyPopupDate: today });
 }
 
 export async function markSetupComplete(farmId?: string): Promise<void> {
